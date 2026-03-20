@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Отметка о присутствии</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;700&family=Onest:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #0d0f14;
+    --surface: #161922;
+    --surface2: #1e2330;
+    --accent: #4f8eff;
+    --accent2: #7c5cfc;
+    --ok: #22c97a;
+    --err: #ff4f6a;
+    --warn: #f5a623;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --border: rgba(255,255,255,0.07);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Onest', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: -200px; left: -200px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(79,142,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    bottom: -200px; right: -200px;
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(124,92,252,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 40px 36px;
+    width: 100%;
+    max-width: 420px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .logo {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 32px;
+  }
+
+  h1 {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #fff 40%, #a0b4ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 32px;
+    line-height: 1.5;
+  }
+
+  .field {
+    margin-bottom: 16px;
+  }
+
+  label {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 16px;
+    color: var(--text);
+    font-family: 'Onest', sans-serif;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+
+  input[type="text"]::placeholder {
+    color: #3a3f52;
+  }
+
+  .geo-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 24px;
+    font-size: 13px;
+    color: var(--muted);
+    transition: all 0.3s;
+  }
+
+  .geo-status.ok { border-color: rgba(34,201,122,0.3); color: var(--ok); background: rgba(34,201,122,0.07); }
+  .geo-status.err { border-color: rgba(255,79,106,0.3); color: var(--err); background: rgba(255,79,106,0.07); }
+  .geo-status.loading { border-color: rgba(79,142,255,0.3); color: var(--accent); background: rgba(79,142,255,0.07); }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+
+  .dot.pulse {
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
+  }
+
+  button {
+    width: 100%;
+    padding: 15px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-family: 'Unbounded', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+
+  button:hover:not(:disabled) { opacity: 0.9; }
+  button:active:not(:disabled) { transform: scale(0.98); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .result {
+    display: none;
+    text-align: center;
+    padding: 32px 0 8px;
+  }
+
+  .result.visible { display: block; }
+
+  .result-icon {
+    font-size: 56px;
+    margin-bottom: 16px;
+    display: block;
+  }
+
+  .result-title {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .result-title.ok { color: var(--ok); }
+  .result-title.err { color: var(--err); }
+
+  .result-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 28px 0;
+  }
+
+  .session-info {
+    font-size: 11px;
+    color: #3a3f52;
+    text-align: center;
+    letter-spacing: 0.05em;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">ПсковГУ · Отметка</div>
+
+  <div id="form-view">
+    <h1>Подтвердите присутствие</h1>
+    <p class="subtitle" id="session-title">Загрузка данных занятия...</p>
+
+    <div class="field">
+      <label>Фамилия Имя Отчество</label>
+      <input type="text" id="fio" placeholder="Иванов Иван Иванович" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>Геолокация</label>
+      <div class="geo-status loading" id="geo-status">
+        <span class="dot pulse"></span>
+        <span id="geo-text">Определяю местоположение...</span>
+      </div>
+    </div>
+
+    <button id="submit-btn" disabled>Отметиться</button>
+
+    <div class="divider"></div>
+    <div class="session-info" id="session-info">—</div>
+  </div>
+
+  <div class="result" id="result-view">
+    <span class="result-icon" id="result-icon">✓</span>
+    <div class="result-title" id="result-title">Отметка принята</div>
+    <p class="result-desc" id="result-desc"></p>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  НАСТРОЙКИ — измените под свои данные
+// ============================================================
+const CONFIG = {
+  // Координаты вашего корпуса (широта, долгота)
+  // Пример: ПсковГУ главный корпус
+  LAT: 59.839473029232494,
+  LNG: 30.104165988901453,
+
+  // Допустимый радиус в метрах
+  RADIUS_M: 150,
+
+  // Окно для отметки: сколько минут с начала пары
+  WINDOW_MIN: 15,
+
+  // URL вашего Google Apps Script (см. файл Code.gs)
+  // После публикации скрипта вставьте сюда полученный URL
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyk3BicykeZbhBF0E6v0TJ42TizqkyHgbizwy-XvS7Fr9dCmOHJqS4NuCQ5q3WgXomC/exec',
+
+  // Название предмета и группы (для отображения)
+  SUBJECT: 'Технологии программирования',
+  GROUP: '4421, 4426, 4427, 4428',
+};
+// ============================================================
+
+let userCoords = null;
+let geoOk = false;
+let submitted = false;
+
+function getSessionInfo() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return {
+    date: `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()}`,
+    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    ts: now.toISOString(),
+  };
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function setGeoStatus(state, text) {
+  const el = document.getElementById('geo-status');
+  const dot = el.querySelector('.dot');
+  el.className = 'geo-status ' + state;
+  dot.className = 'dot' + (state === 'loading' ? ' pulse' : '');
+  document.getElementById('geo-text').textContent = text;
+}
+
+function updateSubmitBtn() {
+  const fio = document.getElementById('fio').value.trim();
+  document.getElementById('submit-btn').disabled = !(fio.length > 3 && geoOk && !submitted);
+}
+
+// Инициализация
+const info = getSessionInfo();
+document.getElementById('session-title').textContent =
+  `${CONFIG.SUBJECT} · ${CONFIG.GROUP}`;
+document.getElementById('session-info').textContent =
+  `${info.date} · ${info.time}`;
+
+document.getElementById('fio').addEventListener('input', updateSubmitBtn);
+
+// Геолокация
+if (!navigator.geolocation) {
+  setGeoStatus('err', 'Геолокация не поддерживается браузером');
+} else {
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      const dist = Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG));
+      if (dist <= CONFIG.RADIUS_M) {
+        geoOk = true;
+        setGeoStatus('ok', `В аудитории · ${dist} м от корпуса`);
+      } else {
+        geoOk = false;
+        setGeoStatus('err', `Слишком далеко от корпуса (${dist} м)`);
+      }
+      updateSubmitBtn();
+    },
+    err => {
+      setGeoStatus('err', 'Нет доступа к геолокации — разрешите в браузере');
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+}
+
+// Отправка
+document.getElementById('submit-btn').addEventListener('click', async () => {
+  if (submitted) return;
+  const fio = document.getElementById('fio').value.trim();
+  if (!fio || !geoOk) return;
+
+  submitted = true;
+  const btn = document.getElementById('submit-btn');
+  btn.textContent = 'Отправляю...';
+  btn.disabled = true;
+
+  const payload = {
+    fio,
+    subject: CONFIG.SUBJECT,
+    group: CONFIG.GROUP,
+    date: info.date,
+    time: info.time,
+    ts: info.ts,
+    lat: userCoords.lat,
+    lng: userCoords.lng,
+    dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
+  };
+
+  try {
+    await fetch(CONFIG.APPS_SCRIPT_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    showResult(true, fio);
+  } catch(e) {
+    showResult(false, fio);
+  }
+});
+
+function showResult(ok, fio) {
+  document.getElementById('form-view').style.display = 'none';
+  const rv = document.getElementById('result-view');
+  rv.classList.add('visible');
+
+  if (ok) {
+    document.getElementById('result-icon').textContent = '✅';
+    const t = document.getElementById('result-title');
+    t.textContent = 'Отметка принята';
+    t.className = 'result-title ok';
+    document.getElementById('result-desc').textContent =
+      `${fio} — присутствие на паре зафиксировано.\n${info.date}, ${info.time}.`;
+  } else {
+    document.getElementById('result-icon').textContent = '❌';
+    const t = document.getElementById('result-title');
+    t.textContent = 'Ошибка отправки';
+    t.className = 'result-title err';
+    document.getElementById('result-desc').textContent =
+      'Не удалось отправить данные. Подойдите к преподавателю.';
+  }
+}
+</script>
+</body>
+</html>
