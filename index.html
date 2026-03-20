@@ -239,7 +239,7 @@
 </head>
 <body>
 <div class="card">
-  <div class="logo">СПбГУАП · Отметка</div>
+  <div class="logo">СПБГУАП · Отметка</div>
 
   <div id="form-view">
     <h1>Подтвердите присутствие</h1>
@@ -278,12 +278,15 @@
 // ============================================================
 const CONFIG = {
   // Координаты вашего корпуса (широта, долгота)
-  // Пример: СПбГУАП главный корпус
+  // Пример: ПсковГУ главный корпус
   LAT: 59.929587,
   LNG: 30.296193,
 
   // Допустимый радиус в метрах
   RADIUS_M: 150,
+
+  // Время начала пары (формат 'ЧЧ:ММ')
+  START_TIME: '17:15',
 
   // Окно для отметки: сколько минут с начала пары
   WINDOW_MIN: 15,
@@ -292,9 +295,9 @@ const CONFIG = {
   // После публикации скрипта вставьте сюда полученный URL
   APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxRyxUvcYRdBMV6adcZ2X9pt6HYeWIEwgldZXpjPFPaOLO058ZRz8DwObGR1mBizPi8/exec',
 
-  // Название предмета и группы (для отображения)
+  // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
-  GROUP: '4421, 4426, 4427, 4428',
+  GROUPS: ['4421', '4426', '4427', '4428'],
 };
 // ============================================================
 
@@ -340,7 +343,7 @@ function getDeviceId() {
 
 // Ключ блокировки: предмет + группа + дата — чтобы на следующей паре снова можно было отметиться
 function getLockKey() {
-  return `att_lock_${CONFIG.SUBJECT}_${CONFIG.GROUP}_${info.dateKey}`;
+  return `att_lock_${CONFIG.SUBJECT}_${CONFIG.GROUPS.join('_')}_${info.dateKey}`;
 }
 
 function isAlreadySubmitted() {
@@ -364,20 +367,45 @@ function updateSubmitBtn() {
   document.getElementById('submit-btn').disabled = !(fio.length > 3 && geoOk && !submitted);
 }
 
+// Проверка временного окна
+// Возвращает: 'early' | 'open' | 'closed'
+function checkTimeWindow() {
+  const now = new Date();
+  const [startH, startM] = CONFIG.START_TIME.split(':').map(Number);
+  const start = new Date(now);
+  start.setHours(startH, startM, 0, 0);
+  const end = new Date(start.getTime() + CONFIG.WINDOW_MIN * 60000);
+
+  if (now < start) return { state: 'early', start, end };
+  if (now > end)   return { state: 'closed', start, end };
+  return { state: 'open', start, end };
+}
+
+function formatTime(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 // Инициализация
 const info = getSessionInfo();
-document.getElementById('session-title').textContent =
-  `${CONFIG.SUBJECT} · ${CONFIG.GROUP}`;
+document.getElementById('session-title').innerHTML =
+  `${CONFIG.SUBJECT}<br><span style="color:var(--muted);font-size:12px">Группы: ${CONFIG.GROUPS.join(', ')}</span>`;
 document.getElementById('session-info').textContent =
   `${info.date} · ${info.time}`;
 
-// Проверяем блокировку устройства сразу при загрузке страницы
-if (isAlreadySubmitted()) {
-  const saved = JSON.parse(localStorage.getItem(getLockKey()));
-  submitted = true;
-  // Сразу показываем экран «уже отмечались»
-  document.addEventListener('DOMContentLoaded', () => {});
-  showAlreadySubmitted(saved.fio);
+// Проверка временного окна — до проверки localStorage
+const timeCheck = checkTimeWindow();
+if (timeCheck.state === 'early') {
+  showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+} else if (timeCheck.state === 'closed') {
+  showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
+} else {
+  // Окно открыто — проверяем localStorage
+  if (isAlreadySubmitted()) {
+    const saved = JSON.parse(localStorage.getItem(getLockKey()));
+    submitted = true;
+    showAlreadySubmitted(saved.fio);
+  }
 }
 
 document.getElementById('fio').addEventListener('input', updateSubmitBtn);
@@ -420,7 +448,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   const payload = {
     fio,
     subject: CONFIG.SUBJECT,
-    group: CONFIG.GROUP,
+    group: CONFIG.GROUPS.join(', '),
     date: info.date,
     time: info.time,
     ts: info.ts,
@@ -445,6 +473,17 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     showResult(false, fio);
   }
 });
+
+function showTimeBlock(state, message) {
+  document.getElementById('form-view').style.display = 'none';
+  const rv = document.getElementById('result-view');
+  rv.classList.add('visible');
+  document.getElementById('result-icon').textContent = state === 'early' ? '⏳' : '🔐';
+  const t = document.getElementById('result-title');
+  t.textContent = state === 'early' ? 'Рано' : 'Время истекло';
+  t.className = 'result-title err';
+  document.getElementById('result-desc').textContent = message;
+}
 
 function showAlreadySubmitted(fio) {
   document.getElementById('form-view').style.display = 'none';
