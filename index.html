@@ -251,6 +251,11 @@
     </div>
 
     <div class="field">
+      <label>Номер группы</label>
+      <input type="text" id="group-input" placeholder="4421" autocomplete="off" maxlength="10">
+    </div>
+
+    <div class="field">
       <label>Геолокация</label>
       <div class="geo-status loading" id="geo-status">
         <span class="dot pulse"></span>
@@ -293,7 +298,7 @@ const CONFIG = {
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzE27xR2W-tc5cEEeVta27micI4i3wZnGil9MAdKXmiHPzZLb5Fq9ERtRJYTFQVz7T4EA/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyB43JbT9wUOXx5jOU0RjWuddvP25Fst5AiuA3ZVBekQeOfO-KwA3QNwrQfA1ByMDQ/exec',
 
   // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
@@ -364,7 +369,8 @@ function setGeoStatus(state, text) {
 
 function updateSubmitBtn() {
   const fio = document.getElementById('fio').value.trim();
-  document.getElementById('submit-btn').disabled = !(fio.length > 3 && geoOk && !submitted);
+  const grp = document.getElementById('group-input').value.trim();
+  document.getElementById('submit-btn').disabled = !(fio.length > 3 && grp.length > 0 && geoOk && !submitted);
 }
 
 // Проверка временного окна
@@ -396,7 +402,7 @@ document.getElementById('session-info').textContent =
 // Проверка временного окна — до проверки localStorage
 const timeCheck = checkTimeWindow();
 if (timeCheck.state === 'early') {
-  showTimeBlock('early', `Опрос начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+  showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
 } else if (timeCheck.state === 'closed') {
   showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
 } else {
@@ -409,6 +415,7 @@ if (timeCheck.state === 'early') {
 }
 
 document.getElementById('fio').addEventListener('input', updateSubmitBtn);
+document.getElementById('group-input').addEventListener('input', updateSubmitBtn);
 
 // Геолокация
 if (!navigator.geolocation) {
@@ -438,7 +445,8 @@ if (!navigator.geolocation) {
 document.getElementById('submit-btn').addEventListener('click', async () => {
   if (submitted) return;
   const fio = document.getElementById('fio').value.trim();
-  if (!fio || !geoOk) return;
+  const studentGroup = document.getElementById('group-input').value.trim();
+  if (!fio || !studentGroup || !geoOk) return;
 
   submitted = true;
   const btn = document.getElementById('submit-btn');
@@ -453,8 +461,18 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     userIp = ipData.ip || 'unknown';
   } catch(_) {}
 
+  // Собираем информацию об устройстве
+  const deviceInfo = {
+    user_agent: navigator.userAgent,
+    platform: navigator.platform || navigator.userAgentData?.platform || 'unknown',
+    language: navigator.language,
+    screen: `${screen.width}x${screen.height}`,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+
   const payload = {
     fio,
+    student_group: studentGroup,
     subject: CONFIG.SUBJECT,
     group: CONFIG.GROUPS.join(', '),
     date: info.date,
@@ -466,6 +484,11 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     device_id: getDeviceId(),
     fingerprint: fpHash || 'unknown',
     ip: userIp,
+    user_agent: deviceInfo.user_agent,
+    platform: deviceInfo.platform,
+    language: deviceInfo.language,
+    screen: deviceInfo.screen,
+    timezone: deviceInfo.timezone,
   };
 
   try {
