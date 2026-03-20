@@ -239,7 +239,7 @@
 </head>
 <body>
 <div class="card">
-  <div class="logo">ПсковГУ · Отметка</div>
+  <div class="logo">СПбГУАП · Отметка</div>
 
   <div id="form-view">
     <h1>Подтвердите присутствие</h1>
@@ -277,9 +277,9 @@
 // ============================================================
 const CONFIG = {
   // Координаты вашего корпуса (широта, долгота)
-  // Пример: ПсковГУ главный корпус
-  LAT: 59.839473029232494,
-  LNG: 30.104165988901453,
+  // Пример: СПбГУАП главный корпус
+  LAT: 59.929587,
+  LNG: 30.296193,
 
   // Допустимый радиус в метрах
   RADIUS_M: 150,
@@ -289,7 +289,7 @@ const CONFIG = {
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyk3BicykeZbhBF0E6v0TJ42TizqkyHgbizwy-XvS7Fr9dCmOHJqS4NuCQ5q3WgXomC/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycby4UTilIuPWG7lfQUDKbS7dWpMH4fXXoWldZrXTDLjzdkvYJp20N1voyHxmRpbFW3w2/exec',
 
   // Название предмета и группы (для отображения)
   SUBJECT: 'Технологии программирования',
@@ -308,6 +308,7 @@ function getSessionInfo() {
     date: `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()}`,
     time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
     ts: now.toISOString(),
+    dateKey: `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`,
   };
 }
 
@@ -318,6 +319,29 @@ function haversine(lat1, lon1, lat2, lon2) {
   const a = Math.sin(dLat/2)**2 +
             Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Уникальный ID устройства — генерируется один раз и хранится в localStorage
+function getDeviceId() {
+  let id = localStorage.getItem('att_device_id');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem('att_device_id', id);
+  }
+  return id;
+}
+
+// Ключ блокировки: предмет + группа + дата — чтобы на следующей паре снова можно было отметиться
+function getLockKey() {
+  return `att_lock_${CONFIG.SUBJECT}_${CONFIG.GROUP}_${info.dateKey}`;
+}
+
+function isAlreadySubmitted() {
+  return !!localStorage.getItem(getLockKey());
+}
+
+function markAsSubmitted(fio) {
+  localStorage.setItem(getLockKey(), JSON.stringify({ fio, ts: new Date().toISOString() }));
 }
 
 function setGeoStatus(state, text) {
@@ -339,6 +363,15 @@ document.getElementById('session-title').textContent =
   `${CONFIG.SUBJECT} · ${CONFIG.GROUP}`;
 document.getElementById('session-info').textContent =
   `${info.date} · ${info.time}`;
+
+// Проверяем блокировку устройства сразу при загрузке страницы
+if (isAlreadySubmitted()) {
+  const saved = JSON.parse(localStorage.getItem(getLockKey()));
+  submitted = true;
+  // Сразу показываем экран «уже отмечались»
+  document.addEventListener('DOMContentLoaded', () => {});
+  showAlreadySubmitted(saved.fio);
+}
 
 document.getElementById('fio').addEventListener('input', updateSubmitBtn);
 
@@ -387,6 +420,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     lat: userCoords.lat,
     lng: userCoords.lng,
     dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
+    device_id: getDeviceId(),
   };
 
   try {
@@ -396,11 +430,25 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    markAsSubmitted(fio);
     showResult(true, fio);
   } catch(e) {
+    submitted = false;
     showResult(false, fio);
   }
 });
+
+function showAlreadySubmitted(fio) {
+  document.getElementById('form-view').style.display = 'none';
+  const rv = document.getElementById('result-view');
+  rv.classList.add('visible');
+  document.getElementById('result-icon').textContent = '🔒';
+  const t = document.getElementById('result-title');
+  t.textContent = 'Уже отмечено';
+  t.className = 'result-title ok';
+  document.getElementById('result-desc').textContent =
+    `${fio} — отметка за сегодня уже была принята с этого устройства.`;
+}
 
 function showResult(ok, fio) {
   document.getElementById('form-view').style.display = 'none';
