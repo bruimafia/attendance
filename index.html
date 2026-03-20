@@ -271,6 +271,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@4/dist/fp.umd.min.js"></script>
 <script>
 // ============================================================
 //  НАСТРОЙКИ — измените под свои данные
@@ -289,7 +290,7 @@ const CONFIG = {
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycby4UTilIuPWG7lfQUDKbS7dWpMH4fXXoWldZrXTDLjzdkvYJp20N1voyHxmRpbFW3w2/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxRyxUvcYRdBMV6adcZ2X9pt6HYeWIEwgldZXpjPFPaOLO058ZRz8DwObGR1mBizPi8/exec',
 
   // Название предмета и группы (для отображения)
   SUBJECT: 'Технологии программирования',
@@ -300,6 +301,12 @@ const CONFIG = {
 let userCoords = null;
 let geoOk = false;
 let submitted = false;
+let fpHash = null; // fingerprint устройства
+
+// Получаем fingerprint асинхронно сразу при загрузке
+FingerprintJS.load().then(fp => fp.get()).then(result => {
+  fpHash = result.visitorId;
+});
 
 function getSessionInfo() {
   const now = new Date();
@@ -421,6 +428,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     lng: userCoords.lng,
     dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
     device_id: getDeviceId(),
+    fingerprint: fpHash || 'unknown',
   };
 
   try {
