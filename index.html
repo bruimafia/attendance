@@ -285,11 +285,11 @@ const CONFIG = {
   // Допустимый радиус в метрах
   RADIUS_M: 150,
 
-  // Время начала пары (формат 'ЧЧ:ММ')
+  // Время начала опроса (формат 'ЧЧ:ММ')
   START_TIME: '17:40',
 
-  // Окно для отметки: сколько минут с начала пары
-  WINDOW_MIN: 15,
+  // Окно для отметки: сколько минут с начала опроса
+  WINDOW_MIN: 5,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
@@ -396,7 +396,7 @@ document.getElementById('session-info').textContent =
 // Проверка временного окна — до проверки localStorage
 const timeCheck = checkTimeWindow();
 if (timeCheck.state === 'early') {
-  showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+  showTimeBlock('early', `Опрос начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
 } else if (timeCheck.state === 'closed') {
   showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
 } else {
