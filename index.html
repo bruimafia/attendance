@@ -284,21 +284,21 @@
 const CONFIG = {
   // Координаты вашего корпуса (широта, долгота)
   // Пример: СПбГУАП главный корпус
-  LAT: 59.721330,
-  LNG: 30.416361,
+  LAT: 59.839553,
+  LNG: 30.104467,
 
   // Допустимый радиус в метрах
   RADIUS_M: 200,
 
-  // Время начала опроса (формат 'ЧЧ:ММ')
-  START_TIME: '15:00',
+  // Время начала пары (формат 'ЧЧ:ММ')
+  START_TIME: '16:00',
 
-  // Окно для отметки: сколько минут с начала опроса
+  // Окно для отметки: сколько минут с начала пары
   WINDOW_MIN: 5,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyB43JbT9wUOXx5jOU0RjWuddvP25Fst5AiuA3ZVBekQeOfO-KwA3QNwrQfA1ByMDQ/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbx6duH5LkxxEOAmcbFVpw7AN6noPFM8nP1wA8MGF1ODdLR4tjOzTT5O5oZScpzPXH4/exec',
 
   // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
@@ -402,7 +402,7 @@ document.getElementById('session-info').textContent =
 // Проверка временного окна — до проверки localStorage
 const timeCheck = checkTimeWindow();
 if (timeCheck.state === 'early') {
-  showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+  showTimeBlock('early', `Опрос начинается в ${formatTime(timeCheck.start)}. Возвращайтесь в это время.`);
 } else if (timeCheck.state === 'closed') {
   showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
 } else {
@@ -453,21 +453,54 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   btn.textContent = 'Отправляю...';
   btn.disabled = true;
 
-  // Получаем внешний IP браузера
+  // Получаем внешний IP + геоданные по IP
   let userIp = 'unknown';
+  let ipCity = 'unknown';
+  let ipRegion = 'unknown';
+  let ipOrg = 'unknown';
   try {
-    const ipRes = await fetch('https://api.ipify.org?format=json');
+    const ipRes = await fetch('https://ipapi.co/json/');
     const ipData = await ipRes.json();
-    userIp = ipData.ip || 'unknown';
+    userIp   = ipData.ip       || 'unknown';
+    ipCity   = ipData.city     || 'unknown';
+    ipRegion = ipData.region   || 'unknown';
+    ipOrg    = ipData.org      || 'unknown';
+  } catch(_) {
+    // fallback — просто IP без геоданных
+    try {
+      const ipRes2 = await fetch('https://api.ipify.org?format=json');
+      const ipData2 = await ipRes2.json();
+      userIp = ipData2.ip || 'unknown';
+    } catch(_) {}
+  }
+
+  // Уровень заряда батареи
+  let battery = 'unknown';
+  try {
+    const bat = await navigator.getBattery();
+    battery = `${Math.round(bat.level * 100)}% ${bat.charging ? '(заряжается)' : ''}`.trim();
   } catch(_) {}
 
-  // Собираем информацию об устройстве
+  // Тип и скорость соединения
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const connectionType  = conn?.effectiveType || conn?.type || 'unknown';
+  const connectionSpeed = conn?.downlink ? `${conn.downlink} Мбит/с` : 'unknown';
+
+  // Собираем всю информацию об устройстве
   const deviceInfo = {
-    user_agent: navigator.userAgent,
-    platform: navigator.platform || navigator.userAgentData?.platform || 'unknown',
-    language: navigator.language,
-    screen: `${screen.width}x${screen.height}`,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    user_agent:        navigator.userAgent,
+    platform:          navigator.platform || navigator.userAgentData?.platform || 'unknown',
+    language:          navigator.language,
+    languages:         (navigator.languages || []).join(', '),
+    screen:            `${screen.width}x${screen.height}`,
+    screen_depth:      `${screen.colorDepth} бит`,
+    timezone:          Intl.DateTimeFormat().resolvedOptions().timeZone,
+    cpu_cores:         navigator.hardwareConcurrency || 'unknown',
+    ram_gb:            navigator.deviceMemory || 'unknown',
+    touch_points:      navigator.maxTouchPoints || 0,
+    connection_type:   connectionType,
+    connection_speed:  connectionSpeed,
+    battery,
   };
 
   const payload = {
@@ -481,14 +514,25 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     lat: userCoords.lat,
     lng: userCoords.lng,
     dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
-    device_id: getDeviceId(),
-    fingerprint: fpHash || 'unknown',
-    ip: userIp,
-    user_agent: deviceInfo.user_agent,
-    platform: deviceInfo.platform,
-    language: deviceInfo.language,
-    screen: deviceInfo.screen,
-    timezone: deviceInfo.timezone,
+    device_id:        getDeviceId(),
+    fingerprint:      fpHash || 'unknown',
+    ip:               userIp,
+    ip_city:          ipCity,
+    ip_region:        ipRegion,
+    ip_org:           ipOrg,
+    user_agent:       deviceInfo.user_agent,
+    platform:         deviceInfo.platform,
+    language:         deviceInfo.language,
+    languages:        deviceInfo.languages,
+    screen:           deviceInfo.screen,
+    screen_depth:     deviceInfo.screen_depth,
+    timezone:         deviceInfo.timezone,
+    cpu_cores:        deviceInfo.cpu_cores,
+    ram_gb:           deviceInfo.ram_gb,
+    touch_points:     deviceInfo.touch_points,
+    connection_type:  deviceInfo.connection_type,
+    connection_speed: deviceInfo.connection_speed,
+    battery:          deviceInfo.battery,
   };
 
   try {
