@@ -261,6 +261,12 @@
         <span class="dot pulse"></span>
         <span id="geo-text">Определяю местоположение...</span>
       </div>
+      <div id="geo-progress-wrap" style="display:none;margin-top:8px">
+        <div style="height:3px;background:var(--surface2);border-radius:2px;overflow:hidden">
+          <div id="geo-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width 0.9s linear"></div>
+        </div>
+        <div id="geo-progress-text" style="font-size:11px;color:var(--muted);margin-top:4px;text-align:center">Замер 0 из 5...</div>
+      </div>
     </div>
 
     <button id="submit-btn" disabled>Отметиться</button>
@@ -283,22 +289,22 @@
 // ============================================================
 const CONFIG = {
   // Координаты вашего корпуса (широта, долгота)
-  // Пример: СПбГУАП главный корпус
-  LAT: 59.929560,
-  LNG: 30.296671,
+  // Пример: СПБГУАП главный корпус
+  LAT: 59.838937,
+  LNG: 30.104297,
 
   // Допустимый радиус в метрах
-  RADIUS_M: 200,
+  RADIUS_M: 150,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '14:40',
+  START_TIME: '19:35',
 
   // Окно для отметки: сколько минут с начала пары
-  WINDOW_MIN: 5,
+  WINDOW_MIN: 15,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbx6duH5LkxxEOAmcbFVpw7AN6noPFM8nP1wA8MGF1ODdLR4tjOzTT5O5oZScpzPXH4/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwHwI5Dcwsnlje0hXEkzfhd2QIa2RStRWS5eOVhx5glflIqSqy-Xf0rdhxF7Q06vbSXGQ/exec',
 
   // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
@@ -402,7 +408,7 @@ document.getElementById('session-info').textContent =
 // Проверка временного окна — до проверки localStorage
 const timeCheck = checkTimeWindow();
 if (timeCheck.state === 'early') {
-  showTimeBlock('early', `Опрос начинается в ${formatTime(timeCheck.start)}. Возвращайтесь в это время.`);
+  showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
 } else if (timeCheck.state === 'closed') {
   showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
 } else {
@@ -417,29 +423,114 @@ if (timeCheck.state === 'early') {
 document.getElementById('fio').addEventListener('input', updateSubmitBtn);
 document.getElementById('group-input').addEventListener('input', updateSubmitBtn);
 
-// Геолокация
-if (!navigator.geolocation) {
-  setGeoStatus('err', 'Геолокация не поддерживается браузером');
-} else {
-  navigator.geolocation.getCurrentPosition(
-    pos => {
-      userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      const dist = Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG));
-      if (dist <= CONFIG.RADIUS_M) {
-        geoOk = true;
-        setGeoStatus('ok', `В аудитории · ${dist} м от корпуса`);
-      } else {
-        geoOk = false;
-        setGeoStatus('err', `Слишком далеко от корпуса (${dist} м)`);
-      }
-      updateSubmitBtn();
-    },
-    err => {
+// Геолокация — 5 замеров по 1 секунде
+// Проверяем: расстояние, точность (accuracy), дисперсию координат
+const GEO_SAMPLES = 5;
+let geoSamples = [];
+let geoCheckResult = null; // финальный результат: { ok, dist, accuracy, variance, suspicious }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function collectGeoSamples() {
+  if (!navigator.geolocation) {
+    setGeoStatus('err', 'Геолокация не поддерживается браузером');
+    return;
+  }
+
+  document.getElementById('geo-progress-wrap').style.display = 'block';
+
+  function getSample() {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject,
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 });
+    });
+  }
+
+  for (let i = 0; i < GEO_SAMPLES; i++) {
+    // Прогресс-бар
+    const pct = Math.round((i / GEO_SAMPLES) * 100);
+    document.getElementById('geo-progress-bar').style.width = pct + '%';
+    document.getElementById('geo-progress-text').textContent = `Замер ${i + 1} из ${GEO_SAMPLES}...`;
+    setGeoStatus('loading', `Проверка геолокации (${i + 1}/${GEO_SAMPLES})...`);
+
+    try {
+      const pos = await getSample();
+      geoSamples.push({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+      });
+    } catch(e) {
       setGeoStatus('err', 'Нет доступа к геолокации — разрешите в браузере');
-    },
-    { enableHighAccuracy: true, timeout: 10000 }
-  );
+      document.getElementById('geo-progress-wrap').style.display = 'none';
+      return;
+    }
+
+    if (i < GEO_SAMPLES - 1) await sleep(1000);
+  }
+
+  // Прогресс 100%
+  document.getElementById('geo-progress-bar').style.width = '100%';
+  document.getElementById('geo-progress-text').textContent = 'Анализ...';
+  await sleep(400);
+  document.getElementById('geo-progress-wrap').style.display = 'none';
+
+  analyzeGeoSamples();
 }
+
+function analyzeGeoSamples() {
+  const lats = geoSamples.map(s => s.lat);
+  const lngs = geoSamples.map(s => s.lng);
+  const accs = geoSamples.map(s => s.accuracy);
+
+  // Среднее положение
+  const avgLat = lats.reduce((a, b) => a + b, 0) / lats.length;
+  const avgLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
+  const avgAcc = accs.reduce((a, b) => a + b, 0) / accs.length;
+
+  // Дисперсия координат (в метрах) — насколько "дрожат" точки
+  const variance = Math.sqrt(
+    lats.map((lat, i) => haversine(lat, lngs[i], avgLat, avgLng) ** 2)
+        .reduce((a, b) => a + b, 0) / lats.length
+  );
+
+  // Расстояние до корпуса
+  const dist = Math.round(haversine(avgLat, avgLng, CONFIG.LAT, CONFIG.LNG));
+
+  // Флаги подозрительности
+  const suspiciousFlags = [];
+
+  // 1. Слишком идеальная точность (Fake GPS часто даёт 0 или 1)
+  if (avgAcc < 2) suspiciousFlags.push(`точность подозрительно идеальная (${avgAcc.toFixed(1)} м)`);
+
+  // 2. Нулевая дисперсия — координаты не меняются между замерами
+  if (variance < 0.1) suspiciousFlags.push(`координаты статичны между замерами (дисперсия ${variance.toFixed(2)} м)`);
+
+  // 3. Аномально низкая точность (GPS не работает нормально)
+  if (avgAcc > 500) suspiciousFlags.push(`точность слишком низкая (${Math.round(avgAcc)} м)`);
+
+  const suspicious = suspiciousFlags.length > 0;
+
+  userCoords = { lat: avgLat, lng: avgLng, accuracy: avgAcc, variance };
+  geoCheckResult = { dist, accuracy: avgAcc, variance, suspicious, suspiciousFlags };
+
+  if (dist > CONFIG.RADIUS_M) {
+    geoOk = false;
+    setGeoStatus('err', `Слишком далеко от корпуса (${dist} м)`);
+  } else if (suspicious) {
+    // Подозрительно — разрешаем отметиться, но помечаем в таблице
+    geoOk = true;
+    setGeoStatus('ok', `В аудитории · ${dist} м · ⚠ проверьте таблицу`);
+  } else {
+    geoOk = true;
+    setGeoStatus('ok', `В аудитории · ${dist} м · точность ${Math.round(avgAcc)} м`);
+  }
+
+  updateSubmitBtn();
+}
+
+// Запускаем сбор замеров
+collectGeoSamples();
 
 // Отправка
 document.getElementById('submit-btn').addEventListener('click', async () => {
@@ -458,13 +549,15 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   let ipCity = 'unknown';
   let ipRegion = 'unknown';
   let ipOrg = 'unknown';
+  let ipCountry = 'unknown';
   try {
     const ipRes = await fetch('https://ipapi.co/json/');
     const ipData = await ipRes.json();
-    userIp   = ipData.ip       || 'unknown';
-    ipCity   = ipData.city     || 'unknown';
-    ipRegion = ipData.region   || 'unknown';
-    ipOrg    = ipData.org      || 'unknown';
+    userIp    = ipData.ip          || 'unknown';
+    ipCity    = ipData.city        || 'unknown';
+    ipRegion  = ipData.region      || 'unknown';
+    ipOrg     = ipData.org         || 'unknown';
+    ipCountry = ipData.country_code || 'unknown';
   } catch(_) {
     // fallback — просто IP без геоданных
     try {
@@ -472,6 +565,16 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
       const ipData2 = await ipRes2.json();
       userIp = ipData2.ip || 'unknown';
     } catch(_) {}
+  }
+
+  // Проверка страны — разрешаем только Россию
+  // Если ipapi.co недоступен (unknown) — пропускаем, чтобы не блокировать при сбое сервиса
+  if (ipCountry !== 'RU' && ipCountry !== 'unknown') {
+    submitted = false;
+    btn.textContent = 'Отметиться';
+    btn.disabled = false;
+    showBlockedCountry(ipCountry);
+    return;
   }
 
   // Уровень заряда батареи
@@ -485,6 +588,23 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
   const connectionType  = conn?.effectiveType || conn?.type || 'unknown';
   const connectionSpeed = conn?.downlink ? `${conn.downlink} Мбит/с` : 'unknown';
+
+  // Сравниваем GPS с геолокацией по IP
+  let ipGeoLat = null, ipGeoLng = null, ipGpsDelta = null;
+  try {
+    const ipGeoRes = await fetch(`https://ipapi.co/json/`);
+    const ipGeoData = await ipGeoRes.json();
+    ipGeoLat = ipGeoData.latitude;
+    ipGeoLng = ipGeoData.longitude;
+    if (ipGeoLat && ipGeoLng && userCoords) {
+      ipGpsDelta = Math.round(haversine(userCoords.lat, userCoords.lng, ipGeoLat, ipGeoLng));
+      // Расхождение > 100 км — подозрительно (IP из другого города)
+      if (ipGpsDelta > 100000) {
+        geoCheckResult.suspiciousFlags.push(`GPS и IP из разных городов (${Math.round(ipGpsDelta/1000)} км)`);
+        geoCheckResult.suspicious = true;
+      }
+    }
+  } catch(_) {}
 
   // Собираем всю информацию об устройстве
   const deviceInfo = {
@@ -514,9 +634,15 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     lat: userCoords.lat,
     lng: userCoords.lng,
     dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
+    geo_accuracy:     Math.round(userCoords.accuracy || 0),
+    geo_variance:     geoCheckResult ? geoCheckResult.variance.toFixed(2) : '',
+    geo_suspicious:   geoCheckResult?.suspicious ? 'ДА' : 'нет',
+    geo_flags:        geoCheckResult?.suspiciousFlags?.join('; ') || '',
+    ip_gps_delta_km:  ipGpsDelta !== null ? Math.round(ipGpsDelta / 1000) : '',
     device_id:        getDeviceId(),
     fingerprint:      fpHash || 'unknown',
     ip:               userIp,
+    ip_country:       ipCountry,
     ip_city:          ipCity,
     ip_region:        ipRegion,
     ip_org:           ipOrg,
@@ -560,6 +686,18 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     showResult(false, fio);
   }
 });
+
+function showBlockedCountry(countryCode) {
+  document.getElementById('form-view').style.display = 'none';
+  const rv = document.getElementById('result-view');
+  rv.classList.add('visible');
+  document.getElementById('result-icon').textContent = '🚫';
+  const t = document.getElementById('result-title');
+  t.textContent = 'Доступ запрещён';
+  t.className = 'result-title err';
+  document.getElementById('result-desc').textContent =
+    `Отметка возможна только с российского IP-адреса. Определённая страна: ${countryCode}.`;
+}
 
 function showTimeBlock(state, message) {
   document.getElementById('form-view').style.display = 'none';
