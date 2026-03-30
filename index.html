@@ -301,10 +301,10 @@ const CONFIG = {
   RADIUS_M: 150,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '19:32',
+  START_TIME: '20:50',
 
   // Окно для отметки: сколько минут с начала пары
-  WINDOW_MIN: 15,
+  WINDOW_MIN: 150,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
@@ -433,7 +433,7 @@ const GEO_SAMPLES = 5;
 let geoSamples = [];
 let geoCheckResult = null; // финальный результат: { ok, dist, accuracy, variance, suspicious }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 
 async function collectGeoSamples() {
   if (!navigator.geolocation) {
@@ -442,44 +442,76 @@ async function collectGeoSamples() {
   }
 
   document.getElementById('geo-progress-wrap').style.display = 'block';
+  setGeoStatus('loading', `Проверка геолокации (0/${GEO_SAMPLES})...`);
 
-  function getSample() {
-    return new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject,
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 });
-    });
-  }
+  return new Promise((resolve) => {
+    let watchId = null;
+    let done = false;
 
-  for (let i = 0; i < GEO_SAMPLES; i++) {
-    // Прогресс-бар
-    const pct = Math.round((i / GEO_SAMPLES) * 100);
-    document.getElementById('geo-progress-bar').style.width = pct + '%';
-    document.getElementById('geo-progress-text').textContent = `Замер ${i + 1} из ${GEO_SAMPLES}...`;
-    setGeoStatus('loading', `Проверка геолокации (${i + 1}/${GEO_SAMPLES})...`);
+    // Таймаут на весь процесс — 20 секунд
+    const globalTimeout = setTimeout(() => {
+      if (done) return;
+      done = true;
+      navigator.geolocation.clearWatch(watchId);
+      if (geoSamples.length >= 2) {
+        // Если набрали хотя бы 2 замера — анализируем что есть
+        finalize();
+      } else {
+        setGeoStatus('err', 'Не удалось получить геолокацию — проверьте разрешения');
+        document.getElementById('geo-progress-wrap').style.display = 'none';
+      }
+      resolve();
+    }, 20000);
 
-    try {
-      const pos = await getSample();
-      geoSamples.push({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-      });
-    } catch(e) {
-      setGeoStatus('err', 'Нет доступа к геолокации — разрешите в браузере');
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (done) return;
+
+        geoSamples.push({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        });
+
+        const n = geoSamples.length;
+        const pct = Math.round((n / GEO_SAMPLES) * 100);
+        document.getElementById('geo-progress-bar').style.width = pct + '%';
+        document.getElementById('geo-progress-text').textContent = `Замер ${n} из ${GEO_SAMPLES}...`;
+        setGeoStatus('loading', `Проверка геолокации (${n}/${GEO_SAMPLES})...`);
+
+        if (n >= GEO_SAMPLES) {
+          done = true;
+          clearTimeout(globalTimeout);
+          navigator.geolocation.clearWatch(watchId);
+          finalize();
+          resolve();
+        }
+      },
+      (err) => {
+        if (done) return;
+        // Если уже есть замеры — не падаем, просто ждём следующего
+        if (geoSamples.length === 0) {
+          done = true;
+          clearTimeout(globalTimeout);
+          navigator.geolocation.clearWatch(watchId);
+          setGeoStatus('err', 'Нет доступа к геолокации — разрешите в браузере');
+          document.getElementById('geo-progress-wrap').style.display = 'none';
+          resolve();
+        }
+        // иначе молча игнорируем единичную ошибку между замерами
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+
+  function finalize() {
+    document.getElementById('geo-progress-bar').style.width = '100%';
+    document.getElementById('geo-progress-text').textContent = 'Анализ...';
+    setTimeout(() => {
       document.getElementById('geo-progress-wrap').style.display = 'none';
-      return;
-    }
-
-    if (i < GEO_SAMPLES - 1) await sleep(1000);
+      analyzeGeoSamples();
+    }, 400);
   }
-
-  // Прогресс 100%
-  document.getElementById('geo-progress-bar').style.width = '100%';
-  document.getElementById('geo-progress-text').textContent = 'Анализ...';
-  await sleep(400);
-  document.getElementById('geo-progress-wrap').style.display = 'none';
-
-  analyzeGeoSamples();
 }
 
 function analyzeGeoSamples() {
