@@ -301,7 +301,7 @@ const CONFIG = {
   RADIUS_M: 150,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '22:35',
+  START_TIME: '22:45',
 
   // Окно для отметки: сколько минут с начала пары
   WINDOW_MIN: 15,
@@ -444,117 +444,188 @@ async function collectGeoSamples() {
   document.getElementById('geo-progress-wrap').style.display = 'block';
   setGeoStatus('loading', `Проверка геолокации (0/${GEO_SAMPLES})...`);
 
-  return new Promise((resolve) => {
-    let watchId = null;
-    let done = false;
+  // Стратегия: getCurrentPosition в цикле с паузой 1.5с между замерами.
+  // Это надёжнее watchPosition на мобильных — браузер не кеширует результат
+  // между отдельными вызовами с maximumAge:0, и ошибка одного замера
+  // не убивает весь процесс.
 
-    // Таймаут на весь процесс — 20 секунд
-    const globalTimeout = setTimeout(() => {
-      if (done) return;
-      done = true;
-      navigator.geolocation.clearWatch(watchId);
-      if (geoSamples.length >= 2) {
-        // Если набрали хотя бы 2 замера — анализируем что есть
-        finalize();
-      } else {
-        setGeoStatus('err', 'Не удалось получить геолокацию — проверьте разрешения');
-        document.getElementById('geo-progress-wrap').style.display = 'none';
-      }
-      resolve();
-    }, 20000);
+  let errorCount = 0;
+  const MAX_ERRORS = 3; // допускаем до 3 временных сбоев подряд
 
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        if (done) return;
-
-        geoSamples.push({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        });
-
-        const n = geoSamples.length;
-        const pct = Math.round((n / GEO_SAMPLES) * 100);
-        document.getElementById('geo-progress-bar').style.width = pct + '%';
-        document.getElementById('geo-progress-text').textContent = `Замер ${n} из ${GEO_SAMPLES}...`;
-        setGeoStatus('loading', `Проверка геолокации (${n}/${GEO_SAMPLES})...`);
-
-        if (n >= GEO_SAMPLES) {
-          done = true;
-          clearTimeout(globalTimeout);
-          navigator.geolocation.clearWatch(watchId);
-          finalize();
-          resolve();
-        }
-      },
-      (err) => {
-        if (done) return;
-        // Если уже есть замеры — не падаем, просто ждём следующего
-        if (geoSamples.length === 0) {
-          done = true;
-          clearTimeout(globalTimeout);
-          navigator.geolocation.clearWatch(watchId);
-          setGeoStatus('err', 'Нет доступа к геолокации — разрешите в браузере');
-          document.getElementById('geo-progress-wrap').style.display = 'none';
-          resolve();
-        }
-        // иначе молча игнорируем единичную ошибку между замерами
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-  });
-
-  function finalize() {
-    document.getElementById('geo-progress-bar').style.width = '100%';
-    document.getElementById('geo-progress-text').textContent = 'Анализ...';
-    setTimeout(() => {
-      document.getElementById('geo-progress-wrap').style.display = 'none';
-      analyzeGeoSamples();
-    }, 400);
+  function getSample() {
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ ok: true, pos }),
+        (err) => resolve({ ok: false, err }),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    });
   }
+
+  while (geoSamples.length < GEO_SAMPLES) {
+    const result = await getSample();
+
+    if (!result.ok) {
+      errorCount++;
+      if (errorCount >= MAX_ERRORS && geoSamples.length === 0) {
+        // Несколько ошибок подряд и ни одного замера — настоящая проблема с доступом
+        setGeoStatus('err', 'Нет доступа к геолокации — разрешите в браузере');
+        document.getElementById('geo-progress-wrap').style.display = 'none';
+        return;
+      }
+      if (errorCount >= MAX_ERRORS && geoSamples.length >= 2) {
+        // Есть хотя бы 2 замера — анализируем что есть
+        break;
+      }
+      // Единичная ошибка — ждём и пробуем снова
+      await new Promise(r => setTimeout(r, 1000));
+      continue;
+    }
+
+    errorCount = 0; // сбрасываем счётчик ошибок при успехе
+    const pos = result.pos;
+    geoSamples.push({
+      lat:              pos.coords.latitude,
+      lng:              pos.coords.longitude,
+      accuracy:         pos.coords.accuracy,
+      altitude:         pos.coords.altitude,
+      altitudeAccuracy: pos.coords.altitudeAccuracy,
+      speed:            pos.coords.speed,
+      heading:          pos.coords.heading,
+      timestamp:        pos.timestamp,
+    });
+
+    const n = geoSamples.length;
+    const pct = Math.round((n / GEO_SAMPLES) * 100);
+    document.getElementById('geo-progress-bar').style.width = pct + '%';
+    document.getElementById('geo-progress-text').textContent = `Замер ${n} из ${GEO_SAMPLES}...`;
+    setGeoStatus('loading', `Проверка геолокации (${n}/${GEO_SAMPLES})...`);
+
+    // Пауза между замерами чтобы GPS успел обновить координаты
+    if (geoSamples.length < GEO_SAMPLES) {
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+
+  document.getElementById('geo-progress-bar').style.width = '100%';
+  document.getElementById('geo-progress-text').textContent = 'Анализ...';
+  await new Promise(r => setTimeout(r, 400));
+  document.getElementById('geo-progress-wrap').style.display = 'none';
+  analyzeGeoSamples();
 }
 
 function analyzeGeoSamples() {
+  const n = geoSamples.length;
   const lats = geoSamples.map(s => s.lat);
   const lngs = geoSamples.map(s => s.lng);
   const accs = geoSamples.map(s => s.accuracy);
 
   // Среднее положение
-  const avgLat = lats.reduce((a, b) => a + b, 0) / lats.length;
-  const avgLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
-  const avgAcc = accs.reduce((a, b) => a + b, 0) / accs.length;
+  const avgLat = lats.reduce((a, b) => a + b, 0) / n;
+  const avgLng = lngs.reduce((a, b) => a + b, 0) / n;
+  const avgAcc = accs.reduce((a, b) => a + b, 0) / n;
 
-  // Дисперсия координат (в метрах) — насколько "дрожат" точки
+  // Дисперсия координат (в метрах)
   const variance = Math.sqrt(
     lats.map((lat, i) => haversine(lat, lngs[i], avgLat, avgLng) ** 2)
-        .reduce((a, b) => a + b, 0) / lats.length
+        .reduce((a, b) => a + b, 0) / n
   );
+
+  // Дисперсия точности — у Fake GPS одинаковая на всех замерах
+  const accVariance = n > 1
+    ? Math.sqrt(accs.map(a => (a - avgAcc) ** 2).reduce((a, b) => a + b, 0) / n)
+    : null;
+
+  // Интервалы между замерами (мс)
+  const intervals = [];
+  for (let i = 1; i < n; i++) {
+    intervals.push(geoSamples[i].timestamp - geoSamples[i - 1].timestamp);
+  }
+  const avgInterval = intervals.length
+    ? intervals.reduce((a, b) => a + b, 0) / intervals.length
+    : null;
+  // Дисперсия интервалов — у Fake GPS идеально равная
+  const intervalVariance = intervals.length > 1
+    ? Math.sqrt(intervals.map(iv => (iv - avgInterval) ** 2).reduce((a, b) => a + b, 0) / intervals.length)
+    : null;
+
+  // Скорость между замерами
+  const speeds = [];
+  for (let i = 1; i < n; i++) {
+    const d = haversine(geoSamples[i-1].lat, geoSamples[i-1].lng,
+                        geoSamples[i].lat,   geoSamples[i].lng);
+    const dt = (geoSamples[i].timestamp - geoSamples[i-1].timestamp) / 1000; // сек
+    if (dt > 0) speeds.push(d / dt); // м/с
+  }
+  const avgSpeed = speeds.length
+    ? speeds.reduce((a, b) => a + b, 0) / speeds.length
+    : null;
+  const speedVariance = speeds.length > 1
+    ? Math.sqrt(speeds.map(s => (s - avgSpeed) ** 2).reduce((a, b) => a + b, 0) / speeds.length)
+    : null;
+
+  // Heading и altitude
+  const headings  = geoSamples.map(s => s.heading).filter(h => h !== null && h !== undefined);
+  const altitudes = geoSamples.map(s => s.altitude).filter(a => a !== null && a !== undefined);
+  const nativeSpeed = geoSamples.map(s => s.speed).filter(s => s !== null && s !== undefined);
 
   // Расстояние до корпуса
   const dist = Math.round(haversine(avgLat, avgLng, CONFIG.LAT, CONFIG.LNG));
 
-  // Флаги подозрительности
+  // ---- Флаги подозрительности ----
   const suspiciousFlags = [];
 
-  // 1. Слишком идеальная точность (Fake GPS часто даёт 0 или 1)
-  if (avgAcc < 2) suspiciousFlags.push(`точность подозрительно идеальная (${avgAcc.toFixed(1)} м)`);
+  // 1. Идеальная точность
+  if (avgAcc < 2)
+    suspiciousFlags.push(`точность идеальная (${avgAcc.toFixed(1)} м) — характерно для Fake GPS`);
 
-  // 2. Нулевая дисперсия — координаты не меняются между замерами
-  if (variance < 0.1) suspiciousFlags.push(`координаты статичны между замерами (дисперсия ${variance.toFixed(2)} м)`);
+  // 2. Нулевая дисперсия координат
+  if (variance < 0.1)
+    suspiciousFlags.push(`координаты не меняются между замерами (дисперсия ${variance.toFixed(2)} м)`);
 
-  // 3. Аномально низкая точность (GPS не работает нормально)
-  if (avgAcc > 500) suspiciousFlags.push(`точность слишком низкая (${Math.round(avgAcc)} м)`);
+  // 3. Очень плохая точность
+  if (avgAcc > 500)
+    suspiciousFlags.push(`точность слишком низкая (${Math.round(avgAcc)} м)`);
+
+  // 4. Точность одинакова на всех замерах
+  if (accVariance !== null && accVariance < 0.5 && n >= 3)
+    suspiciousFlags.push(`точность одинакова на всех замерах (разброс ${accVariance.toFixed(2)} м) — реальный GPS меняется`);
+
+  // 5. Интервалы между замерами идеально равны
+  if (intervalVariance !== null && intervalVariance < 50 && n >= 3)
+    suspiciousFlags.push(`интервалы между замерами подозрительно равные (σ=${intervalVariance.toFixed(0)} мс) — похоже на таймер`);
+
+  // 6. Скорость перемещения подозрительно равномерная
+  if (speedVariance !== null && avgSpeed > 0.1 && speedVariance < 0.05)
+    suspiciousFlags.push(`скорость движения идеально равномерная (${(avgSpeed*3.6).toFixed(2)} км/ч, σ=${speedVariance.toFixed(3)}) — реальный GPS так не работает`);
+
+  // 7. coords.speed есть но равен 0 или null при изменяющихся координатах
+  if (variance > 1 && nativeSpeed.length > 0 && nativeSpeed.every(s => s === 0))
+    suspiciousFlags.push(`координаты меняются, но браузерная скорость = 0 — признак Fake GPS`);
+
+  // 8. coords.heading отсутствует при движении
+  if (variance > 1 && headings.length === 0)
+    suspiciousFlags.push(`нет данных о направлении (heading=null) при изменяющихся координатах`);
+
+  // 9. Отсутствует altitude при движении или хорошем GPS
+  if (altitudes.length === 0 && avgAcc < 50)
+    suspiciousFlags.push(`нет данных о высоте (altitude=null) при хорошей точности GPS`);
 
   const suspicious = suspiciousFlags.length > 0;
 
   userCoords = { lat: avgLat, lng: avgLng, accuracy: avgAcc, variance };
-  geoCheckResult = { dist, accuracy: avgAcc, variance, suspicious, suspiciousFlags };
+  geoCheckResult = {
+    dist, accuracy: avgAcc, variance,
+    accVariance, intervalVariance, avgSpeed, speedVariance,
+    hasAltitude: altitudes.length > 0,
+    hasHeading:  headings.length > 0,
+    suspicious, suspiciousFlags,
+  };
 
   if (dist > CONFIG.RADIUS_M) {
     geoOk = false;
     setGeoStatus('err', `Слишком далеко от корпуса (${dist} м)`);
   } else if (suspicious) {
-    // Подозрительно — разрешаем отметиться, но помечаем в таблице
     geoOk = true;
     setGeoStatus('ok', `В аудитории · ${dist} м · ⚠ проверьте таблицу`);
   } else {
@@ -670,10 +741,16 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     lat: userCoords.lat,
     lng: userCoords.lng,
     dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
-    geo_accuracy:     Math.round(userCoords.accuracy || 0),
-    geo_variance:     geoCheckResult ? geoCheckResult.variance.toFixed(2) : '',
-    geo_suspicious:   geoCheckResult?.suspicious ? 'ДА' : 'нет',
-    geo_flags:        geoCheckResult?.suspiciousFlags?.join('; ') || '',
+    geo_accuracy:        Math.round(userCoords.accuracy || 0),
+    geo_variance:        geoCheckResult ? geoCheckResult.variance.toFixed(2) : '',
+    geo_acc_variance:    geoCheckResult?.accVariance?.toFixed(2) ?? '',
+    geo_interval_sigma:  geoCheckResult?.intervalVariance?.toFixed(0) ?? '',
+    geo_avg_speed_kmh:   geoCheckResult?.avgSpeed != null ? (geoCheckResult.avgSpeed * 3.6).toFixed(2) : '',
+    geo_speed_sigma:     geoCheckResult?.speedVariance?.toFixed(3) ?? '',
+    geo_has_altitude:    geoCheckResult?.hasAltitude ? 'да' : 'нет',
+    geo_has_heading:     geoCheckResult?.hasHeading  ? 'да' : 'нет',
+    geo_suspicious:      geoCheckResult?.suspicious  ? 'ДА' : 'нет',
+    geo_flags:           geoCheckResult?.suspiciousFlags?.join('; ') || '',
     ip_gps_delta_km:  ipGpsDelta !== null ? Math.round(ipGpsDelta / 1000) : '',
     device_id:        getDeviceId(),
     fingerprint:      fpHash || 'unknown',
