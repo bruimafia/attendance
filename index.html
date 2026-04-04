@@ -301,14 +301,14 @@ const CONFIG = {
   RADIUS_M: 6150,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '22:45',
+  START_TIME: '10:30',
 
   // Окно для отметки: сколько минут с начала пары
-  WINDOW_MIN: 15,
+  WINDOW_MIN: 105,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbx-UM06JlN1AmfDv2UB-TSirB_RNllE-UaZKOGAnY-jXL4gMvktuR-oUpC6cQTEjumb/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwsP20Kr6VMUzPUb4ttM62UBJ0YfPa0XHPA8V1hYsOEKHdo6W41lRjXozniwOEjkXSA/exec',
 
   // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
@@ -402,27 +402,76 @@ function formatTime(date) {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-// Инициализация
-const info = getSessionInfo();
+// Проверка временного окна по серверному времени
+// serverTime — объект Date полученный с сервера
+function checkTimeWindow(now) {
+  const [startH, startM] = CONFIG.START_TIME.split(':').map(Number);
+  const start = new Date(now);
+  start.setHours(startH, startM, 0, 0);
+  const end = new Date(start.getTime() + CONFIG.WINDOW_MIN * 60000);
+
+  if (now < start) return { state: 'early', start, end };
+  if (now > end)   return { state: 'closed', start, end };
+  return { state: 'open', start, end };
+}
+
+function formatTime(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// Инициализация — сначала получаем серверное время
 document.getElementById('session-title').innerHTML =
   `${CONFIG.SUBJECT}<br><span style="color:var(--muted);font-size:12px">Группы: ${CONFIG.GROUPS.join(', ')}</span>`;
-document.getElementById('session-info').textContent =
-  `${info.date} · ${info.time}`;
 
-// Проверка временного окна — до проверки localStorage
-const timeCheck = checkTimeWindow();
-if (timeCheck.state === 'early') {
-  showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
-} else if (timeCheck.state === 'closed') {
-  showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
-} else {
-  // Окно открыто — проверяем localStorage
-  if (isAlreadySubmitted()) {
-    const saved = JSON.parse(localStorage.getItem(getLockKey()));
-    submitted = true;
-    showAlreadySubmitted(saved.fio);
+async function init() {
+  // Получаем серверное время через Apps Script
+  let serverNow = null;
+  try {
+    const res = await fetch(CONFIG.APPS_SCRIPT_URL + '?action=time');
+    const json = await res.json();
+    if (json.ts) serverNow = new Date(json.ts);
+  } catch(_) {}
+
+  // Если Apps Script недоступен — используем клиентское время как запасной вариант
+  const now = serverNow || new Date();
+  const fallback = !serverNow;
+
+  const pad = n => String(n).padStart(2, '0');
+  const dateStr = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()}`;
+  const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+  // Обновляем глобальный info серверным временем
+  info.date    = dateStr;
+  info.time    = timeStr;
+  info.ts      = now.toISOString();
+  info.dateKey = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+
+  document.getElementById('session-info').textContent =
+    `${dateStr} · ${timeStr}${fallback ? ' (локальное время)' : ''}`;
+
+  // Проверка временного окна по серверному времени
+  const timeCheck = checkTimeWindow(now);
+  if (timeCheck.state === 'early') {
+    showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+  } else if (timeCheck.state === 'closed') {
+    showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
+  } else {
+    // Окно открыто — проверяем localStorage
+    if (isAlreadySubmitted()) {
+      const saved = JSON.parse(localStorage.getItem(getLockKey()));
+      submitted = true;
+      showAlreadySubmitted(saved.fio);
+    }
+  }
+
+  // Запускаем геолокацию параллельно после проверки времени
+  if (timeCheck.state === 'open' && !submitted) {
+    collectGeoSamples();
   }
 }
+
+init();
 
 document.getElementById('fio').addEventListener('input', updateSubmitBtn);
 document.getElementById('group-input').addEventListener('input', updateSubmitBtn);
@@ -575,41 +624,29 @@ function analyzeGeoSamples() {
   // ---- Флаги подозрительности ----
   const suspiciousFlags = [];
 
-  // 1. Идеальная точность
+  // 1. Идеальная точность (Fake GPS часто даёт ровно 0–1 м)
   if (avgAcc < 2)
     suspiciousFlags.push(`точность идеальная (${avgAcc.toFixed(1)} м) — характерно для Fake GPS`);
 
-  // 2. Нулевая дисперсия координат
-  if (variance < 0.1)
+  // 2. Нулевая дисперсия координат — стоят ровно без шума
+  // Порог 0.3 м: реальный GPS всегда чуть «дрожит» даже в помещении
+  if (variance < 0.3)
     suspiciousFlags.push(`координаты не меняются между замерами (дисперсия ${variance.toFixed(2)} м)`);
 
-  // 3. Очень плохая точность
-  if (avgAcc > 500)
-    suspiciousFlags.push(`точность слишком низкая (${Math.round(avgAcc)} м)`);
+  // 3. Точность одинакова на всех замерах с точностью до метра
+  // Реальный GPS меняет accuracy постоянно, Fake GPS держит одно значение
+  // Порог 0.5 м и только если точность хорошая (не в помещении с плохим сигналом)
+  if (accVariance !== null && accVariance < 0.5 && avgAcc < 100 && n >= 3)
+    suspiciousFlags.push(`точность одинакова на всех замерах (σ=${accVariance.toFixed(2)} м)`);
 
-  // 4. Точность одинакова на всех замерах
-  if (accVariance !== null && accVariance < 0.5 && n >= 3)
-    suspiciousFlags.push(`точность одинакова на всех замерах (разброс ${accVariance.toFixed(2)} м) — реальный GPS меняется`);
+  // 4. Отсутствует altitude при очень хорошей точности
+  // Порог ужесточён до 20 м — только при реально хорошем GPS сигнале
+  if (altitudes.length === 0 && avgAcc < 20)
+    suspiciousFlags.push(`нет данных о высоте (altitude=null) при отличной точности GPS (${avgAcc.toFixed(0)} м)`);
 
-  // 5. Интервалы между замерами идеально равны
-  if (intervalVariance !== null && intervalVariance < 50 && n >= 3)
-    suspiciousFlags.push(`интервалы между замерами подозрительно равные (σ=${intervalVariance.toFixed(0)} мс) — похоже на таймер`);
-
-  // 6. Скорость перемещения подозрительно равномерная
-  if (speedVariance !== null && avgSpeed > 0.1 && speedVariance < 0.05)
-    suspiciousFlags.push(`скорость движения идеально равномерная (${(avgSpeed*3.6).toFixed(2)} км/ч, σ=${speedVariance.toFixed(3)}) — реальный GPS так не работает`);
-
-  // 7. coords.speed есть но равен 0 или null при изменяющихся координатах
-  if (variance > 1 && nativeSpeed.length > 0 && nativeSpeed.every(s => s === 0))
-    suspiciousFlags.push(`координаты меняются, но браузерная скорость = 0 — признак Fake GPS`);
-
-  // 8. coords.heading отсутствует при движении
-  if (variance > 1 && headings.length === 0)
-    suspiciousFlags.push(`нет данных о направлении (heading=null) при изменяющихся координатах`);
-
-  // 9. Отсутствует altitude при движении или хорошем GPS
-  if (altitudes.length === 0 && avgAcc < 50)
-    suspiciousFlags.push(`нет данных о высоте (altitude=null) при хорошей точности GPS`);
+  // Признаки 5-8 (интервалы, speed, heading) удалены —
+  // давали ложные срабатывания на реальных устройствах из-за
+  // особенностей iOS Safari и нашего цикла с фиксированной паузой
 
   const suspicious = suspiciousFlags.length > 0;
 
@@ -635,9 +672,6 @@ function analyzeGeoSamples() {
 
   updateSubmitBtn();
 }
-
-// Запускаем сбор замеров
-collectGeoSamples();
 
 // Отправка
 document.getElementById('submit-btn').addEventListener('click', async () => {
