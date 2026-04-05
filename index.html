@@ -301,14 +301,14 @@ const CONFIG = {
   RADIUS_M: 6150,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '12:30',
+  START_TIME: '22:40',
 
   // Окно для отметки: сколько минут с начала пары
   WINDOW_MIN: 105,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwnoenipC4-Ubv1tG8QYkDGdFPaBEsy5Dghv3QW6HbUX2cobrW9ISil2gyjHQp_zE-4/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxQwj0W0TyiKE-nJ2VjkMTyMRODtg5gBiW-SCmk9U1lcuMHPqUuVp8Mlr-kTIg2qD7z/exec',
 
   // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
@@ -428,17 +428,38 @@ async function init() {
   // Запускаем геолокацию сразу — не ждём ответа сервера
   const geoPromise = collectGeoSamples();
 
-  // Получаем серверное время параллельно, с таймаутом 5 секунд
+  // Получаем серверное время параллельно, с таймаутом 4 секунды
+  // Используем jsonp-подобный трюк через script тег чтобы обойти CORS на GET
   let serverNow = null;
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(CONFIG.APPS_SCRIPT_URL + '?action=time',
-      { signal: controller.signal });
-    clearTimeout(timeoutId);
-    const json = await res.json();
-    if (json.ts) serverNow = new Date(json.ts);
+    await new Promise((resolve) => {
+      const timeoutId = setTimeout(resolve, 4000);
+      const script = document.createElement('script');
+      window.__timeCallback = (data) => {
+        clearTimeout(timeoutId);
+        if (data && data.ts) serverNow = new Date(data.ts);
+        document.head.removeChild(script);
+        delete window.__timeCallback;
+        resolve();
+      };
+      script.onerror = () => { clearTimeout(timeoutId); resolve(); };
+      script.src = CONFIG.APPS_SCRIPT_URL + '?action=time&callback=__timeCallback';
+      document.head.appendChild(script);
+    });
   } catch(_) {}
+
+  // Если JSONP не сработал — пробуем обычный fetch с коротким таймаутом
+  if (!serverNow) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(CONFIG.APPS_SCRIPT_URL + '?action=time',
+        { signal: controller.signal });
+      clearTimeout(timeoutId);
+      const json = await res.json();
+      if (json.ts) serverNow = new Date(json.ts);
+    } catch(_) {}
+  }
 
   const now = serverNow || new Date();
   const fallback = !serverNow;
@@ -506,9 +527,32 @@ async function collectGeoSamples() {
 
   function getSample() {
     return new Promise((resolve) => {
+      let resolved = false;
+
+      // Внешний таймаут — страховка на случай если браузер молча завис
+      // и не вызвал ни success ни error колбэк (баг на некоторых Android)
+      const hardTimeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve({ ok: false, err: 'timeout' });
+        }
+      }, 10000);
+
       navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ ok: true, pos }),
-        (err) => resolve({ ok: false, err }),
+        (pos) => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(hardTimeout);
+            resolve({ ok: true, pos });
+          }
+        },
+        (err) => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(hardTimeout);
+            resolve({ ok: false, err });
+          }
+        },
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
       );
     });
