@@ -301,14 +301,14 @@ const CONFIG = {
   RADIUS_M: 6150,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '10:30',
+  START_TIME: '12:30',
 
   // Окно для отметки: сколько минут с начала пары
   WINDOW_MIN: 105,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwsP20Kr6VMUzPUb4ttM62UBJ0YfPa0XHPA8V1hYsOEKHdo6W41lRjXozniwOEjkXSA/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwnoenipC4-Ubv1tG8QYkDGdFPaBEsy5Dghv3QW6HbUX2cobrW9ISil2gyjHQp_zE-4/exec',
 
   // Название предмета и список групп
   SUBJECT: 'Технологии программирования',
@@ -425,15 +425,21 @@ document.getElementById('session-title').innerHTML =
   `${CONFIG.SUBJECT}<br><span style="color:var(--muted);font-size:12px">Группы: ${CONFIG.GROUPS.join(', ')}</span>`;
 
 async function init() {
-  // Получаем серверное время через Apps Script
+  // Запускаем геолокацию сразу — не ждём ответа сервера
+  const geoPromise = collectGeoSamples();
+
+  // Получаем серверное время параллельно, с таймаутом 5 секунд
   let serverNow = null;
   try {
-    const res = await fetch(CONFIG.APPS_SCRIPT_URL + '?action=time');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(CONFIG.APPS_SCRIPT_URL + '?action=time',
+      { signal: controller.signal });
+    clearTimeout(timeoutId);
     const json = await res.json();
     if (json.ts) serverNow = new Date(json.ts);
   } catch(_) {}
 
-  // Если Apps Script недоступен — используем клиентское время как запасной вариант
   const now = serverNow || new Date();
   const fallback = !serverNow;
 
@@ -441,7 +447,6 @@ async function init() {
   const dateStr = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()}`;
   const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-  // Обновляем глобальный info серверным временем
   info.date    = dateStr;
   info.time    = timeStr;
   info.ts      = now.toISOString();
@@ -450,24 +455,22 @@ async function init() {
   document.getElementById('session-info').textContent =
     `${dateStr} · ${timeStr}${fallback ? ' (локальное время)' : ''}`;
 
-  // Проверка временного окна по серверному времени
+  // Проверяем временное окно — если закрыто, ждём конца геолокации и блокируем
   const timeCheck = checkTimeWindow(now);
   if (timeCheck.state === 'early') {
+    await geoPromise; // дожидаемся геолокации чтобы не оборвать её на полпути
     showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
   } else if (timeCheck.state === 'closed') {
+    await geoPromise;
     showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
   } else {
-    // Окно открыто — проверяем localStorage
+    // Окно открыто — проверяем localStorage пока идёт геолокация
     if (isAlreadySubmitted()) {
       const saved = JSON.parse(localStorage.getItem(getLockKey()));
       submitted = true;
       showAlreadySubmitted(saved.fio);
     }
-  }
-
-  // Запускаем геолокацию параллельно после проверки времени
-  if (timeCheck.state === 'open' && !submitted) {
-    collectGeoSamples();
+    await geoPromise;
   }
 }
 
@@ -747,8 +750,46 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     }
   } catch(_) {}
 
+  // Определяем тип устройства
+  function detectDeviceType(ua, touchPoints, w, h) {
+    const uaL = ua.toLowerCase();
+    const isIpad = /ipad/.test(uaL) ||
+      (navigator.platform === 'MacIntel' && touchPoints > 1); // iPad на iOS 13+
+    const isTabletAndroid = /android/.test(uaL) && !/mobile/.test(uaL);
+    const isMobileAndroid = /android/.test(uaL) && /mobile/.test(uaL);
+    const isIphone = /iphone/.test(uaL);
+    const isMobileUA = /mobile|phone|mini/.test(uaL);
+
+    if (isIphone || isMobileAndroid || (isMobileUA && !isIpad && !isTabletAndroid))
+      return 'телефон';
+    if (isIpad || isTabletAndroid)
+      return 'планшет';
+    // Последний рубеж — touchPoints и размер экрана
+    if (touchPoints >= 5 && Math.min(w, h) < 800)
+      return 'телефон';
+    if (touchPoints >= 5)
+      return 'планшет';
+    return 'компьютер';
+  }
+
+  const deviceType = detectDeviceType(
+    navigator.userAgent,
+    navigator.maxTouchPoints || 0,
+    screen.width, screen.height
+  );
+
+  // Если не телефон — добавляем флаг подозрительности
+  if (deviceType !== 'телефон') {
+    const deviceFlag = `отметка с ${deviceType}а — ожидается телефон`;
+    if (geoCheckResult) {
+      geoCheckResult.suspiciousFlags.push(deviceFlag);
+      geoCheckResult.suspicious = true;
+    }
+  }
+
   // Собираем всю информацию об устройстве
   const deviceInfo = {
+    device_type:       deviceType,
     user_agent:        navigator.userAgent,
     platform:          navigator.platform || navigator.userAgentData?.platform || 'unknown',
     language:          navigator.language,
@@ -786,6 +827,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     geo_suspicious:      geoCheckResult?.suspicious  ? 'ДА' : 'нет',
     geo_flags:           geoCheckResult?.suspiciousFlags?.join('; ') || '',
     ip_gps_delta_km:  ipGpsDelta !== null ? Math.round(ipGpsDelta / 1000) : '',
+    device_type:      deviceInfo.device_type,
     device_id:        getDeviceId(),
     fingerprint:      fpHash || 'unknown',
     ip:               userIp,
