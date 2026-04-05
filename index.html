@@ -259,8 +259,11 @@
       <label>Геолокация</label>
       <div class="geo-status loading" id="geo-status">
         <span class="dot pulse"></span>
-        <span id="geo-text">Определяю местоположение...</span>
+        <span id="geo-text">Нажмите кнопку ниже для определения местоположения</span>
       </div>
+      <button id="geo-btn" type="button" style="width:100%;margin-top:8px;padding:11px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:inherit;font-size:13px;cursor:pointer;transition:opacity 0.2s" onclick="startGeo()">
+        📍 Определить местоположение
+      </button>
       <div id="geo-progress-wrap" style="display:none;margin-top:8px">
         <div style="height:3px;background:var(--surface2);border-radius:2px;overflow:hidden">
           <div id="geo-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width 0.9s linear"></div>
@@ -435,8 +438,7 @@ document.getElementById('session-title').innerHTML =
 
 async function init() {
   dbg('init start');
-  // Запускаем геолокацию сразу — не ждём ответа сервера
-  const geoPromise = collectGeoSamples();
+  // Получаем серверное время, геолокация запустится по нажатию кнопки
 
   // Получаем серверное время параллельно, с таймаутом 4 секунды
   // Используем jsonp-подобный трюк через script тег чтобы обойти CORS на GET
@@ -492,20 +494,25 @@ async function init() {
   // Проверяем временное окно — если закрыто, ждём конца геолокации и блокируем
   const timeCheck = checkTimeWindow(now);
   if (timeCheck.state === 'early') {
-    await geoPromise; // дожидаемся геолокации чтобы не оборвать её на полпути
     showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
   } else if (timeCheck.state === 'closed') {
-    await geoPromise;
     showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
   } else {
-    // Окно открыто — проверяем localStorage пока идёт геолокация
     if (isAlreadySubmitted()) {
       const saved = JSON.parse(localStorage.getItem(getLockKey()));
       submitted = true;
       showAlreadySubmitted(saved.fio);
     }
-    await geoPromise;
   }
+}
+
+// Запускается по нажатию кнопки — браузер гарантированно обработает геолокацию
+// только при явном действии пользователя (некоторые мобильные браузеры требуют этого)
+function startGeo() {
+  const btn = document.getElementById('geo-btn');
+  if (btn) btn.style.display = 'none';
+  dbg('geo: triggered by user gesture');
+  collectGeoSamples();
 }
 
 init();
