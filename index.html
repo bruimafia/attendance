@@ -273,6 +273,7 @@
 
     <div class="divider"></div>
     <div class="session-info" id="session-info">—</div>
+    <div id="debug-log" style="margin-top:8px;font-size:10px;color:#3a3f52;font-family:monospace;line-height:1.6"></div>
   </div>
 
   <div class="result" id="result-view">
@@ -315,6 +316,14 @@ const CONFIG = {
   GROUPS: ['4421', '4426', '4427', '4428'],
 };
 // ============================================================
+
+function dbg(msg) {
+  const el = document.getElementById('debug-log');
+  if (!el) return;
+  const t = new Date();
+  const ts = `${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}.${String(t.getMilliseconds()).padStart(3,'0')}`;
+  el.innerHTML += `${ts} ${msg}<br>`;
+}
 
 let userCoords = null;
 let geoOk = false;
@@ -425,12 +434,14 @@ document.getElementById('session-title').innerHTML =
   `${CONFIG.SUBJECT}<br><span style="color:var(--muted);font-size:12px">Группы: ${CONFIG.GROUPS.join(', ')}</span>`;
 
 async function init() {
+  dbg('init start');
   // Запускаем геолокацию сразу — не ждём ответа сервера
   const geoPromise = collectGeoSamples();
 
   // Получаем серверное время параллельно, с таймаутом 4 секунды
   // Используем jsonp-подобный трюк через script тег чтобы обойти CORS на GET
   let serverNow = null;
+  dbg('time fetch: JSONP start');
   try {
     await new Promise((resolve) => {
       const timeoutId = setTimeout(resolve, 4000);
@@ -438,11 +449,12 @@ async function init() {
       window.__timeCallback = (data) => {
         clearTimeout(timeoutId);
         if (data && data.ts) serverNow = new Date(data.ts);
+        dbg(`time JSONP ok: ${data?.ts}`);
         document.head.removeChild(script);
         delete window.__timeCallback;
         resolve();
       };
-      script.onerror = () => { clearTimeout(timeoutId); resolve(); };
+      script.onerror = () => { clearTimeout(timeoutId); dbg('time JSONP script error'); resolve(); };
       script.src = CONFIG.APPS_SCRIPT_URL + '?action=time&callback=__timeCallback';
       document.head.appendChild(script);
     });
@@ -450,6 +462,7 @@ async function init() {
 
   // Если JSONP не сработал — пробуем обычный fetch с коротким таймаутом
   if (!serverNow) {
+    dbg('time fetch: regular fetch start');
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -509,6 +522,7 @@ let geoCheckResult = null; // финальный результат: { ok, dist,
 
 
 async function collectGeoSamples() {
+  dbg(`geo: start, geolocation=${!!navigator.geolocation}, protocol=${location.protocol}`);
   if (!navigator.geolocation) {
     setGeoStatus('err', 'Геолокация не поддерживается браузером');
     return;
@@ -534,6 +548,7 @@ async function collectGeoSamples() {
       const hardTimeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
+          dbg('geo: hard timeout 10s fired');
           resolve({ ok: false, err: 'timeout' });
         }
       }, 10000);
@@ -543,6 +558,7 @@ async function collectGeoSamples() {
           if (!resolved) {
             resolved = true;
             clearTimeout(hardTimeout);
+            dbg(`geo: success acc=${pos.coords.accuracy}`);
             resolve({ ok: true, pos });
           }
         },
@@ -550,6 +566,7 @@ async function collectGeoSamples() {
           if (!resolved) {
             resolved = true;
             clearTimeout(hardTimeout);
+            dbg(`geo: error code=${err.code} msg=${err.message}`);
             resolve({ ok: false, err });
           }
         },
