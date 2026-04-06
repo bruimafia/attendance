@@ -293,22 +293,17 @@
 // ============================================================
 const CONFIG = {
   // Координаты вашего корпуса (широта, долгота)
-  // Пример: СПБГУАП главный корпус
-  LAT: 59.839533,
-  LNG: 30.103929,
-
-  // гуап
-  //LAT: 59.929560,
-  //LNG: 30.296671,
+  LAT: 59.838937,
+  LNG: 30.104297,
 
   // Допустимый радиус в метрах
-  RADIUS_M: 25150,
+  RADIUS_M: 200,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '22:40',
+  START_TIME: '19:00',
 
   // Окно для отметки: сколько минут с начала пары
-  WINDOW_MIN: 105,
+  WINDOW_MIN: 120,
 
   // URL вашего Google Apps Script (см. файл Code.gs)
   // После публикации скрипта вставьте сюда полученный URL
@@ -331,7 +326,8 @@ function dbg(msg) {
 let userCoords = null;
 let geoOk = false;
 let submitted = false;
-let fpHash = null; // fingerprint устройства
+let fpHash = null;
+let info = {};
 
 // Получаем fingerprint асинхронно сразу при загрузке
 FingerprintJS.load().then(fp => fp.get()).then(result => {
@@ -756,24 +752,31 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   btn.textContent = 'Отправляю...';
   btn.disabled = true;
 
-  // Получаем внешний IP + геоданные по IP
   let userIp = 'unknown';
   let ipCity = 'unknown';
   let ipRegion = 'unknown';
   let ipOrg = 'unknown';
   let ipCountry = 'unknown';
+  let ipGeoLat = null, ipGeoLng = null;
   try {
-    const ipRes = await fetch('https://ipapi.co/json/');
+    const ipCtrl = new AbortController();
+    const ipTimeout = setTimeout(() => ipCtrl.abort(), 5000);
+    const ipRes = await fetch('https://ipapi.co/json/', { signal: ipCtrl.signal });
+    clearTimeout(ipTimeout);
     const ipData = await ipRes.json();
-    userIp    = ipData.ip          || 'unknown';
-    ipCity    = ipData.city        || 'unknown';
-    ipRegion  = ipData.region      || 'unknown';
-    ipOrg     = ipData.org         || 'unknown';
+    userIp    = ipData.ip           || 'unknown';
+    ipCity    = ipData.city         || 'unknown';
+    ipRegion  = ipData.region       || 'unknown';
+    ipOrg     = ipData.org          || 'unknown';
     ipCountry = ipData.country_code || 'unknown';
+    ipGeoLat  = ipData.latitude     || null;
+    ipGeoLng  = ipData.longitude    || null;
   } catch(_) {
-    // fallback — просто IP без геоданных
     try {
-      const ipRes2 = await fetch('https://api.ipify.org?format=json');
+      const ipCtrl2 = new AbortController();
+      const ipTimeout2 = setTimeout(() => ipCtrl2.abort(), 3000);
+      const ipRes2 = await fetch('https://api.ipify.org?format=json', { signal: ipCtrl2.signal });
+      clearTimeout(ipTimeout2);
       const ipData2 = await ipRes2.json();
       userIp = ipData2.ip || 'unknown';
     } catch(_) {}
@@ -801,22 +804,14 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   const connectionType  = conn?.effectiveType || conn?.type || 'unknown';
   const connectionSpeed = conn?.downlink ? `${conn.downlink} Мбит/с` : 'unknown';
 
-  // Сравниваем GPS с геолокацией по IP
-  let ipGeoLat = null, ipGeoLng = null, ipGpsDelta = null;
-  try {
-    const ipGeoRes = await fetch(`https://ipapi.co/json/`);
-    const ipGeoData = await ipGeoRes.json();
-    ipGeoLat = ipGeoData.latitude;
-    ipGeoLng = ipGeoData.longitude;
-    if (ipGeoLat && ipGeoLng && userCoords) {
-      ipGpsDelta = Math.round(haversine(userCoords.lat, userCoords.lng, ipGeoLat, ipGeoLng));
-      // Расхождение > 100 км — подозрительно (IP из другого города)
-      if (ipGpsDelta > 100000) {
-        geoCheckResult.suspiciousFlags.push(`GPS и IP из разных городов (${Math.round(ipGpsDelta/1000)} км)`);
-        geoCheckResult.suspicious = true;
-      }
+  let ipGpsDelta = null;
+  if (ipGeoLat && ipGeoLng && userCoords) {
+    ipGpsDelta = Math.round(haversine(userCoords.lat, userCoords.lng, ipGeoLat, ipGeoLng));
+    if (ipGpsDelta > 100000) {
+      geoCheckResult.suspiciousFlags.push(`GPS и IP из разных городов (${Math.round(ipGpsDelta/1000)} км)`);
+      geoCheckResult.suspicious = true;
     }
-  } catch(_) {}
+  }
 
   // Определяем тип устройства
   function detectDeviceType(ua, touchPoints, w, h) {
@@ -873,57 +868,61 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     battery,
   };
 
-  const payload = {
-    fio,
-    student_group: studentGroup,
-    subject: CONFIG.SUBJECT,
-    group: CONFIG.GROUPS.join(', '),
-    date: info.date,
-    time: info.time,
-    ts: info.ts,
-    lat: userCoords.lat,
-    lng: userCoords.lng,
-    dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
-    geo_accuracy:        Math.round(userCoords.accuracy || 0),
-    geo_variance:        geoCheckResult ? geoCheckResult.variance.toFixed(2) : '',
-    geo_acc_variance:    geoCheckResult?.accVariance?.toFixed(2) ?? '',
-    geo_interval_sigma:  geoCheckResult?.intervalVariance?.toFixed(0) ?? '',
-    geo_avg_speed_kmh:   geoCheckResult?.avgSpeed != null ? (geoCheckResult.avgSpeed * 3.6).toFixed(2) : '',
-    geo_speed_sigma:     geoCheckResult?.speedVariance?.toFixed(3) ?? '',
-    geo_has_altitude:    geoCheckResult?.hasAltitude ? 'да' : 'нет',
-    geo_has_heading:     geoCheckResult?.hasHeading  ? 'да' : 'нет',
-    geo_suspicious:      geoCheckResult?.suspicious  ? 'ДА' : 'нет',
-    geo_flags:           geoCheckResult?.suspiciousFlags?.join('; ') || '',
-    ip_gps_delta_km:  ipGpsDelta !== null ? Math.round(ipGpsDelta / 1000) : '',
-    device_type:      deviceInfo.device_type,
-    device_id:        getDeviceId(),
-    fingerprint:      fpHash || 'unknown',
-    ip:               userIp,
-    ip_country:       ipCountry,
-    ip_city:          ipCity,
-    ip_region:        ipRegion,
-    ip_org:           ipOrg,
-    user_agent:       deviceInfo.user_agent,
-    platform:         deviceInfo.platform,
-    language:         deviceInfo.language,
-    languages:        deviceInfo.languages,
-    screen:           deviceInfo.screen,
-    screen_depth:     deviceInfo.screen_depth,
-    timezone:         deviceInfo.timezone,
-    cpu_cores:        deviceInfo.cpu_cores,
-    ram_gb:           deviceInfo.ram_gb,
-    touch_points:     deviceInfo.touch_points,
-    connection_type:  deviceInfo.connection_type,
-    connection_speed: deviceInfo.connection_speed,
-    battery:          deviceInfo.battery,
-  };
-
   try {
+    const payload = {
+      fio,
+      student_group: studentGroup,
+      subject: CONFIG.SUBJECT,
+      group: CONFIG.GROUPS.join(', '),
+      date: info.date,
+      time: info.time,
+      ts: info.ts,
+      lat: userCoords.lat,
+      lng: userCoords.lng,
+      dist: Math.round(haversine(userCoords.lat, userCoords.lng, CONFIG.LAT, CONFIG.LNG)),
+      geo_accuracy:        Math.round(userCoords.accuracy || 0),
+      geo_variance:        geoCheckResult ? geoCheckResult.variance.toFixed(2) : '',
+      geo_acc_variance:    geoCheckResult?.accVariance?.toFixed(2) ?? '',
+      geo_interval_sigma:  geoCheckResult?.intervalVariance?.toFixed(0) ?? '',
+      geo_avg_speed_kmh:   geoCheckResult?.avgSpeed != null ? (geoCheckResult.avgSpeed * 3.6).toFixed(2) : '',
+      geo_speed_sigma:     geoCheckResult?.speedVariance?.toFixed(3) ?? '',
+      geo_has_altitude:    geoCheckResult?.hasAltitude ? 'да' : 'нет',
+      geo_has_heading:     geoCheckResult?.hasHeading  ? 'да' : 'нет',
+      geo_suspicious:      geoCheckResult?.suspicious  ? 'ДА' : 'нет',
+      geo_flags:           geoCheckResult?.suspiciousFlags?.join('; ') || '',
+      ip_gps_delta_km:  ipGpsDelta !== null ? Math.round(ipGpsDelta / 1000) : '',
+      device_type:      deviceInfo.device_type,
+      device_id:        getDeviceId(),
+      fingerprint:      fpHash || 'unknown',
+      ip:               userIp,
+      ip_country:       ipCountry,
+      ip_city:          ipCity,
+      ip_region:        ipRegion,
+      ip_org:           ipOrg,
+      user_agent:       deviceInfo.user_agent,
+      platform:         deviceInfo.platform,
+      language:         deviceInfo.language,
+      languages:        deviceInfo.languages,
+      screen:           deviceInfo.screen,
+      screen_depth:     deviceInfo.screen_depth,
+      timezone:         deviceInfo.timezone,
+      cpu_cores:        deviceInfo.cpu_cores,
+      ram_gb:           deviceInfo.ram_gb,
+      touch_points:     deviceInfo.touch_points,
+      connection_type:  deviceInfo.connection_type,
+      connection_speed: deviceInfo.connection_speed,
+      battery:          deviceInfo.battery,
+    };
+
+    const sendCtrl = new AbortController();
+    const sendTimeout = setTimeout(() => sendCtrl.abort(), 15000);
     const res = await fetch(CONFIG.APPS_SCRIPT_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' }, // text/plain обходит preflight, но позволяет читать ответ
+      headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify(payload),
+      signal: sendCtrl.signal,
     });
+    clearTimeout(sendTimeout);
     const json = await res.json();
 
     if (json.status === 'duplicate') {
@@ -939,6 +938,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
       showResult(false, fio);
     }
   } catch(e) {
+    dbg('submit error: ' + e.message);
     submitted = false;
     showResult(false, fio);
   }
