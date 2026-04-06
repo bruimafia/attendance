@@ -241,7 +241,7 @@
 <div class="card">
   <div class="logo">СПБГУАП · Отметка</div>
 
-  <div id="form-view">
+  <div id="form-view" style="display:none">
     <h1>Подтвердите присутствие</h1>
     <p class="subtitle" id="session-title">Загрузка данных занятия...</p>
 
@@ -259,11 +259,8 @@
       <label>Геолокация</label>
       <div class="geo-status loading" id="geo-status">
         <span class="dot pulse"></span>
-        <span id="geo-text">Нажмите кнопку ниже для определения местоположения</span>
+        <span id="geo-text">Определение местоположения...</span>
       </div>
-      <button id="geo-btn" type="button" style="width:100%;margin-top:8px;padding:11px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:inherit;font-size:13px;cursor:pointer;transition:opacity 0.2s" onclick="startGeo()">
-        📍 Определить местоположение
-      </button>
       <div id="geo-progress-wrap" style="display:none;margin-top:8px">
         <div style="height:3px;background:var(--surface2);border-radius:2px;overflow:hidden">
           <div id="geo-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width 0.9s linear"></div>
@@ -300,7 +297,7 @@ const CONFIG = {
   RADIUS_M: 200,
 
   // Время начала пары (формат 'ЧЧ:ММ')
-  START_TIME: '19:00',
+  START_TIME: '20:00',
 
   // Окно для отметки: сколько минут с начала пары
   WINDOW_MIN: 120,
@@ -498,16 +495,15 @@ async function init() {
       const saved = JSON.parse(localStorage.getItem(getLockKey()));
       submitted = true;
       showAlreadySubmitted(saved.fio);
+    } else {
+      document.getElementById('form-view').style.display = '';
+      startGeo();
     }
   }
 }
 
-// Запускается по нажатию кнопки — браузер гарантированно обработает геолокацию
-// только при явном действии пользователя (некоторые мобильные браузеры требуют этого)
 function startGeo() {
-  const btn = document.getElementById('geo-btn');
-  if (btn) btn.style.display = 'none';
-  dbg('geo: triggered by user gesture');
+  dbg('geo: auto-start');
   collectGeoSamples();
 }
 
@@ -738,6 +734,8 @@ function analyzeGeoSamples() {
   }
 
   updateSubmitBtn();
+  setTimeout(updateSubmitBtn, 100);
+  setTimeout(updateSubmitBtn, 500);
 }
 
 // Отправка
