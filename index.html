@@ -288,7 +288,7 @@
 
   <div id="loading-view" style="text-align:center;padding:48px 0 32px">
     <div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto 20px"></div>
-    <div style="font-size:14px;color:var(--muted)">Загрузка...</div>
+    <div style="font-size:14px;color:var(--muted)">Определение серверного времени…</div>
   </div>
 
   <div id="form-view" style="display:none">
@@ -519,10 +519,11 @@ function applyServerTimeToInfo(now) {
 
 async function init() {
   dbg('init start');
-  const pad = n => String(n).padStart(2, '0');
 
-  const localNow = new Date();
-  info.dateKey = `${localNow.getFullYear()}-${pad(localNow.getMonth()+1)}-${pad(localNow.getDate())}`;
+  const { now } = await fetchServerTime();
+  applyServerTimeToInfo(now);
+  serverTimeReady = true;
+
   if (isAlreadySubmitted()) {
     const saved = JSON.parse(localStorage.getItem(getLockKey()));
     submitted = true;
@@ -530,27 +531,20 @@ async function init() {
     return;
   }
 
-  document.getElementById('session-info').textContent = '—';
+  const timeCheck = checkTimeWindow(now);
+  if (timeCheck.state === 'early') {
+    showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+    return;
+  }
+  if (timeCheck.state === 'closed') {
+    showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
+    return;
+  }
 
   hideLoading();
   document.getElementById('form-view').style.display = '';
   startGeo();
-
-  const { now } = await fetchServerTime();
-  applyServerTimeToInfo(now);
-  serverTimeReady = true;
   updateSubmitBtn();
-
-  const timeCheck = checkTimeWindow(now);
-  if (timeCheck.state === 'early') {
-    showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
-  } else if (timeCheck.state === 'closed') {
-    showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
-  } else if (isAlreadySubmitted()) {
-    const saved = JSON.parse(localStorage.getItem(getLockKey()));
-    submitted = true;
-    showAlreadySubmitted(saved.fio);
-  }
 }
 
 function startGeo() {
