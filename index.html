@@ -323,7 +323,7 @@
 
     <div class="divider"></div>
     <div class="session-info" id="session-info">—</div>
-    <div id="debug-log" style="margin-top:8px;font-size:10px;color:#3a3f52;font-family:monospace;line-height:1.6"></div>
+    <!-- <div id="debug-log" style="margin-top:8px;font-size:10px;color:#3a3f52;font-family:monospace;line-height:1.6"></div> -->
   </div>
 
   <div class="result" id="result-view">
@@ -363,11 +363,11 @@ const CONFIG = {
 // ============================================================
 
 function dbg(msg) {
-  const el = document.getElementById('debug-log');
-  if (!el) return;
-  const t = new Date();
-  const ts = `${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}.${String(t.getMilliseconds()).padStart(3,'0')}`;
-  el.innerHTML += `${ts} ${msg}<br>`;
+  // const el = document.getElementById('debug-log');
+  // if (!el) return;
+  // const t = new Date();
+  // const ts = `${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}.${String(t.getMilliseconds()).padStart(3,'0')}`;
+  // el.innerHTML += `${ts} ${msg}<br>`;
 }
 
 let userCoords = null;
@@ -533,11 +533,11 @@ async function init() {
 
   const timeCheck = checkTimeWindow(now);
   if (timeCheck.state === 'early') {
-    showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
+    showTimeBlock('early', `Опрос начинается в ${formatTime(timeCheck.start)}. Возвращайтесь в это время.`);
     return;
   }
   if (timeCheck.state === 'closed') {
-    showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
+    showTimeBlock('closed', `Окно опроса закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
     return;
   }
 
@@ -772,7 +772,7 @@ function analyzeGeoSamples() {
     setGeoStatus('err', `Слишком далеко от корпуса (${dist} м)`);
   } else if (suspicious) {
     geoOk = true;
-    setGeoStatus('ok', `В аудитории · ${dist} м · ⚠ проверьте таблицу`);
+    setGeoStatus('ok', `В аудитории · ${dist} м · ⚠ подозрительная отметка`);
   } else {
     geoOk = true;
     setGeoStatus('ok', `В аудитории · ${dist} м · точность ${Math.round(avgAcc)} м`);
