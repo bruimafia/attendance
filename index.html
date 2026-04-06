@@ -375,6 +375,8 @@ let geoOk = false;
 let submitted = false;
 let fpHash = null;
 let info = {};
+/** true после получения сервера или fallback — до этого кнопка «Отметиться» недоступна */
+let serverTimeReady = false;
 
 // Получаем fingerprint асинхронно сразу при загрузке
 FingerprintJS.load().then(fp => fp.get()).then(result => {
@@ -440,26 +442,8 @@ function setGeoStatus(state, text) {
 function updateSubmitBtn() {
   const fio = document.getElementById('fio').value.trim();
   const grp = document.getElementById('group-input').value.trim();
-  document.getElementById('submit-btn').disabled = !(fio.length > 3 && grp.length > 0 && geoOk && !submitted);
-}
-
-// Проверка временного окна
-// Возвращает: 'early' | 'open' | 'closed'
-function checkTimeWindow() {
-  const now = new Date();
-  const [startH, startM] = CONFIG.START_TIME.split(':').map(Number);
-  const start = new Date(now);
-  start.setHours(startH, startM, 0, 0);
-  const end = new Date(start.getTime() + CONFIG.WINDOW_MIN * 60000);
-
-  if (now < start) return { state: 'early', start, end };
-  if (now > end)   return { state: 'closed', start, end };
-  return { state: 'open', start, end };
-}
-
-function formatTime(date) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  document.getElementById('submit-btn').disabled = !(
+    serverTimeReady && fio.length > 3 && grp.length > 0 && geoOk && !submitted);
 }
 
 // Проверка временного окна по серверному времени
@@ -480,25 +464,11 @@ function formatTime(date) {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-// Инициализация — сначала получаем серверное время
+// Заголовок занятия — сразу
 document.getElementById('session-title').innerHTML =
   `${CONFIG.SUBJECT}<br><span style="color:var(--muted);font-size:12px">Группы: ${CONFIG.GROUPS.join(', ')}</span>`;
 
-async function init() {
-  dbg('init start');
-  const pad = n => String(n).padStart(2, '0');
-
-  // Быстрая проверка по локальному времени — если уже отмечен, показываем сразу
-  const localNow = new Date();
-  info.dateKey = `${localNow.getFullYear()}-${pad(localNow.getMonth()+1)}-${pad(localNow.getDate())}`;
-  if (isAlreadySubmitted()) {
-    const saved = JSON.parse(localStorage.getItem(getLockKey()));
-    submitted = true;
-    showAlreadySubmitted(saved.fio);
-    return;
-  }
-
-  // Получаем серверное время (JSONP с таймаутом 4с)
+async function fetchServerTime() {
   let serverNow = null;
   dbg('time fetch: JSONP start');
   try {
@@ -509,7 +479,7 @@ async function init() {
         clearTimeout(timeoutId);
         if (data && data.ts) serverNow = new Date(data.ts);
         dbg(`time JSONP ok: ${data?.ts}`);
-        document.head.removeChild(script);
+        try { document.head.removeChild(script); } catch(_) {}
         delete window.__timeCallback;
         resolve();
       };
@@ -519,7 +489,6 @@ async function init() {
     });
   } catch(_) {}
 
-  // Если JSONP не сработал — обычный fetch с коротким таймаутом
   if (!serverNow) {
     dbg('time fetch: regular fetch start');
     try {
@@ -534,36 +503,53 @@ async function init() {
   }
 
   const now = serverNow || new Date();
-  const fallback = !serverNow;
+  return { now };
+}
 
+function applyServerTimeToInfo(now) {
+  const pad = n => String(n).padStart(2, '0');
   const dateStr = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()}`;
   const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-
-  info.date    = dateStr;
-  info.time    = timeStr;
-  info.ts      = now.toISOString();
+  info.date = dateStr;
+  info.time = timeStr;
+  info.ts = now.toISOString();
   info.dateKey = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  document.getElementById('session-info').textContent = `${dateStr} · ${timeStr}`;
+}
 
-  document.getElementById('session-info').textContent =
-    `${dateStr} · ${timeStr}${fallback ? ' (локальное время)' : ''}`;
+async function init() {
+  dbg('init start');
+  const pad = n => String(n).padStart(2, '0');
 
-  // Проверяем временное окно по серверному времени
+  const localNow = new Date();
+  info.dateKey = `${localNow.getFullYear()}-${pad(localNow.getMonth()+1)}-${pad(localNow.getDate())}`;
+  if (isAlreadySubmitted()) {
+    const saved = JSON.parse(localStorage.getItem(getLockKey()));
+    submitted = true;
+    showAlreadySubmitted(saved.fio);
+    return;
+  }
+
+  document.getElementById('session-info').textContent = '—';
+
+  hideLoading();
+  document.getElementById('form-view').style.display = '';
+  startGeo();
+
+  const { now } = await fetchServerTime();
+  applyServerTimeToInfo(now);
+  serverTimeReady = true;
+  updateSubmitBtn();
+
   const timeCheck = checkTimeWindow(now);
   if (timeCheck.state === 'early') {
     showTimeBlock('early', `Пара начинается в ${formatTime(timeCheck.start)}. Возвращайтесь тогда.`);
   } else if (timeCheck.state === 'closed') {
     showTimeBlock('closed', `Окно отметки закрылось в ${formatTime(timeCheck.end)}. Обратитесь к преподавателю.`);
-  } else {
-    // Повторная проверка на случай если серверная дата отличается от локальной
-    if (isAlreadySubmitted()) {
-      const saved = JSON.parse(localStorage.getItem(getLockKey()));
-      submitted = true;
-      showAlreadySubmitted(saved.fio);
-    } else {
-      hideLoading();
-      document.getElementById('form-view').style.display = '';
-      startGeo();
-    }
+  } else if (isAlreadySubmitted()) {
+    const saved = JSON.parse(localStorage.getItem(getLockKey()));
+    submitted = true;
+    showAlreadySubmitted(saved.fio);
   }
 }
 
@@ -805,7 +791,7 @@ function analyzeGeoSamples() {
 
 // Отправка
 document.getElementById('submit-btn').addEventListener('click', async () => {
-  if (submitted) return;
+  if (submitted || !serverTimeReady) return;
   const fio = document.getElementById('fio').value.trim();
   const studentGroup = document.getElementById('group-input').value.trim();
   if (!fio || !studentGroup || !geoOk) return;
